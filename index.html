@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Instagram follow checker</title>
+<meta name="description" content="Compare Instagram followers and following locally, across multiple export ZIPs.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23222222'/%3E%3Cpath d='M8 16l5 5 11-11' fill='none' stroke='white' stroke-width='3'/%3E%3C/svg%3E">
+<style>
+:root{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:16px;color:#222;background:#fff;color-scheme:light}*{box-sizing:border-box}body{margin:0}main{max-width:680px;margin:0 auto;padding:64px 24px}h1{font-size:24px;font-weight:600;line-height:1.3;margin:0 0 12px}h2{font-size:18px;font-weight:600;margin:0}p{line-height:1.5}.intro{margin:0 0 24px;color:#555}.drop{padding:0}.drop.over{outline:2px solid #555;outline-offset:10px}.button,button{font:inherit;display:inline-block;padding:9px 14px;border:1px solid #bbb;border-radius:4px;background:#fff;color:#222;cursor:pointer;text-decoration:none}.button{position:relative;background:#222;color:#fff;border-color:#222}button:disabled{opacity:.4;cursor:default}button:focus-visible,input:focus-visible,summary:focus-visible,a:focus-visible,.button:focus-within{outline:2px solid #222;outline-offset:3px}.fileinput{position:absolute;width:1px;height:1px;opacity:0}.footnote{font-size:14px;color:#666;margin:12px 0 0}.work{margin:24px 0}.progressline{display:flex;justify-content:space-between;gap:12px;align-items:center}.progressline p{margin:0;font-size:14px;overflow-wrap:anywhere}progress{width:100%;height:4px;margin-top:12px;accent-color:#555}.error{color:#982525;border-left:2px solid currentColor;padding-left:14px;margin-top:24px;font-size:14px;line-height:1.6;white-space:pre-line}.stats{display:flex;flex-wrap:wrap;gap:6px 18px;color:#666;font-size:14px;margin:28px 0 18px}.stats strong{font-weight:500;color:#222}.resulthead{display:flex;align-items:center;justify-content:space-between;gap:16px}.search{width:100%;font:inherit;padding:10px 12px;border:1px solid #bbb;border-radius:4px;margin-top:20px}ul{list-style:none;padding:0;margin:12px 0 20px}li{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 0;border-bottom:1px solid #eee;overflow-wrap:anywhere}a{color:inherit;text-underline-offset:3px}li a{font-size:14px;flex-shrink:0;color:#666}.pager{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.pager span{font-size:14px;color:#666}details{margin-top:24px;font-size:14px;line-height:1.6;color:#666}summary{cursor:pointer}.logs{max-height:240px;overflow:auto;overflow-wrap:anywhere;margin-top:12px}.logs div+div{margin-top:8px}[hidden]{display:none!important}@media(max-width:480px){main{padding:32px 20px}.resulthead{align-items:flex-start}}
+</style>
+</head>
+<body><main>
+<h1>Who doesn’t follow you back?</h1>
+<p class="intro">Choose all ZIPs from your Instagram export. Any number of files is fine.</p>
+<section id="drop" class="drop" aria-label="Select Instagram export files">
+<label class="button" id="choose">Choose ZIP files<input class="fileinput" id="files" type="file" multiple accept=".zip,.json,.html,.htm" aria-label="Choose Instagram export ZIP files"></label>
+<span class="footnote" style="margin-left:10px">or drop them here</span>
+</section>
+<p class="footnote">Files stay on your device.</p>
+<section id="work" class="work" hidden aria-label="Import progress"><div class="progressline"><p id="status" role="status" aria-live="polite"></p><button id="cancel" class="secondary">Cancel</button></div><progress id="progress" value="0" max="1" aria-label="Files processed"></progress></section>
+<div id="error" class="error" role="alert" hidden></div>
+<section id="results" hidden aria-label="Comparison results">
+<div class="stats"><span><strong id="followersCount"></strong> followers</span><span><strong id="followingCount"></strong> following</span><span><strong id="missingCount"></strong> don’t follow back</span></div>
+<div class="resulthead"><h2>Not following you back</h2><button id="reset" class="secondary">Clear files</button></div>
+<p class="footnote">Based on your export. Include every ZIP from an “All time” export for a complete comparison.</p>
+<input id="search" class="search" type="search" placeholder="Search usernames" aria-label="Search usernames">
+<p id="empty" role="status" hidden></p><ul id="list" aria-label="Accounts that do not follow you back"></ul>
+<div id="pager" class="pager"><button id="prev" class="secondary">Previous</button><span id="pageLabel"></span><button id="next" class="secondary">Next</button></div>
+</section>
+<details id="audit" hidden><summary id="auditTitle">Import details</summary><div id="logs" class="logs"></div></details>
+<details><summary>Help</summary><p>Select every ZIP from the same account and export. No unzipping needed. Extracted follower and following JSON or HTML files also work.</p><p>For a complete list, use an “All time” export. Results reflect that export, not your live account.</p><p>For split archives (.z01, .z02, etc.), extract the complete set first, then choose the follower and following files.</p></details>
+</main>
+<script>
+'use strict';
+const $=id=>document.getElementById(id), fmt=n=>n.toLocaleString();
+const MAX_TEXT=128*1024*1024,MAX_DIRECTORY=128*1024*1024;
+let busy=false,cancelled=false,accounts=[],page=0,auditLines=[];
+const tick=()=>new Promise(resolve=>setTimeout(resolve,0));
+function checkCancel(){if(cancelled)throw new Error('Import cancelled. No partial results are shown.');}
+function kindOf(path){const name=path.split(/[\\/]/).pop();const match=/^(followers|following)(?:_\d+)?\.(json|html?)$/i.exec(name);return match?{kind:match[1].toLowerCase(),format:match[2].toLowerCase()}:null;}
+function normalize(value){if(typeof value!=='string')return null;const s=value.trim().replace(/^@/,'').toLowerCase();return /^[a-z0-9._]{1,30}$/.test(s)?s:null;}
+function fromURL(value){try{const u=new URL(value);if(!['https:','http:'].includes(u.protocol)||!['instagram.com','www.instagram.com'].includes(u.hostname.toLowerCase()))return null;const parts=u.pathname.split('/').filter(Boolean);if(parts[0]==='_u')parts.shift();if(parts.length!==1||['accounts','explore','p','reel','reels','stories','direct'].includes(parts[0]))return null;return normalize(decodeURIComponent(parts[0]));}catch{return null;}}
+function parseNames(text,format,kind){
+ const names=new Set();
+ if(format==='json'){
+  const data=JSON.parse(text.replace(/^\uFEFF/,''));
+  const rows=Array.isArray(data)?data:data?.[kind==='following'?'relationships_following':'relationships_followers'];
+  if(!Array.isArray(rows))throw new Error('Unrecognized '+kind+' JSON structure. Select the original Instagram export files.');
+  for(const row of rows){
+   if(!row||typeof row!=='object')throw new Error('Invalid account entry in '+kind+' file.');
+   const entries=Array.isArray(row.string_list_data)?row.string_list_data:[];
+   const found=entries.map(e=>normalize(e?.value)||fromURL(e?.href)).filter(Boolean);
+   if(!found.length&&kind==='following'){const title=normalize(row.title);if(title)found.push(title);}
+   if(!found.length)throw new Error('An account entry could not be read. No partial comparison will be shown.');
+   found.forEach(n=>names.add(n));
+  }
+ }else{
+  const doc=new DOMParser().parseFromString(text,'text/html');
+  for(const a of doc.querySelectorAll('a[href]')){const name=fromURL(a.getAttribute('href'));if(name)names.add(name);}
+  if(!names.size)throw new Error('No account links found in this HTML file. Export as JSON to verify an empty list.');
+ }
+ return names;
+}
+function u64(view,offset){const n=view.getBigUint64(offset,true);if(n>BigInt(Number.MAX_SAFE_INTEGER))throw new Error('Archive offsets exceed this browser’s safe range.');return Number(n);}
+async function bytes(file,start,length){checkCancel();if(!Number.isSafeInteger(start)||!Number.isSafeInteger(length)||start<0||length<0||start+length>file.size)throw new Error('Incomplete or damaged ZIP. Download this part again.');const b=await file.slice(start,start+length).arrayBuffer();checkCancel();return new Uint8Array(b);}
+async function zipEntries(file){
+ const tailStart=Math.max(0,file.size-65557),tail=await bytes(file,tailStart,file.size-tailStart),v=new DataView(tail.buffer);let e=-1;
+ for(let i=tail.length-22;i>=0;i--){if(v.getUint32(i,true)===0x06054b50&&i+22+v.getUint16(i+20,true)===tail.length){e=i;break;}}
+ if(e<0)throw new Error('Not a complete ZIP. If this is a split archive, unzip the complete set first.');
+ if(v.getUint16(e+4,true)||v.getUint16(e+6,true)||v.getUint16(e+8,true)!==v.getUint16(e+10,true))throw new Error('Split ZIP detected. Unzip all parts together, then choose the extracted follower and following files.');
+ let count=v.getUint16(e+10,true),size=v.getUint32(e+12,true),offset=v.getUint32(e+16,true);
+ if(count===65535||size===0xffffffff||offset===0xffffffff){
+  const loc=new DataView((await bytes(file,tailStart+e-20,20)).buffer);
+  if(loc.getUint32(0,true)!==0x07064b50||loc.getUint32(4,true)!==0||loc.getUint32(16,true)!==1)throw new Error('Unsupported split ZIP64 archive. Extract it first.');
+  const z=new DataView((await bytes(file,u64(loc,8),56)).buffer);
+  if(z.getUint32(0,true)!==0x06064b50||z.getUint32(16,true)||z.getUint32(20,true)||u64(z,24)!==u64(z,32))throw new Error('Invalid or split ZIP64 archive. Extract it first.');
+  count=u64(z,32);size=u64(z,40);offset=u64(z,48);
+ }
+ if(size>MAX_DIRECTORY)throw new Error('This ZIP’s file index is too large. Unzip it and select the follower and following files.');
+ const directory=await bytes(file,offset,size),d=new DataView(directory.buffer),decoder=new TextDecoder();let pos=0;const matches=[];
+ for(let i=0;i<count;i++){
+  if(i%2000===0){await tick();checkCancel();}
+  if(pos+46>size||d.getUint32(pos,true)!==0x02014b50)throw new Error('Damaged ZIP file index. Download this part again.');
+  const flags=d.getUint16(pos+8,true),method=d.getUint16(pos+10,true),crc=d.getUint32(pos+16,true),nameLen=d.getUint16(pos+28,true),extraLen=d.getUint16(pos+30,true),commentLen=d.getUint16(pos+32,true);let compressed=d.getUint32(pos+20,true),uncompressed=d.getUint32(pos+24,true),local=d.getUint32(pos+42,true),disk=d.getUint16(pos+34,true);
+  const end=pos+46+nameLen+extraLen+commentLen;if(end>size)throw new Error('Truncated ZIP file index.');
+  const name=decoder.decode(directory.subarray(pos+46,pos+46+nameLen)),kind=kindOf(name);
+  if(kind){
+   let extra=pos+46+nameLen;const extraEnd=extra+extraLen;
+   while(extra+4<=extraEnd){const tag=d.getUint16(extra,true),len=d.getUint16(extra+2,true);if(extra+4+len>extraEnd)throw new Error('Invalid ZIP metadata.');if(tag===1){let p=extra+4;const take=()=>{if(p+8>extra+4+len)throw new Error('Incomplete ZIP64 metadata.');const n=u64(d,p);p+=8;return n;};if(uncompressed===0xffffffff)uncompressed=take();if(compressed===0xffffffff)compressed=take();if(local===0xffffffff)local=take();if(disk===65535){if(p+4>extra+4+len)throw new Error('Incomplete ZIP64 disk metadata.');disk=d.getUint32(p,true);}}extra+=4+len;}
+   if(disk)throw new Error('Split ZIP detected. Extract it first.');
+   matches.push({name,...kind,flags,method,crc,compressed,uncompressed,local});
+  }
+  pos=end;
+ }
+ return matches;
+}
+const crcTable=Uint32Array.from({length:256},(_,n)=>{for(let k=0;k<8;k++)n=n&1?0xedb88320^(n>>>1):n>>>1;return n>>>0;});
+async function extract(file,entry){
+ if(entry.flags&1)throw new Error('Password-protected ZIPs must be extracted first.');
+ if(![0,8].includes(entry.method))throw new Error('Unsupported ZIP compression. Extract this ZIP first.');
+ if(entry.uncompressed>MAX_TEXT)throw new Error('A follower file exceeds 128 MB. Export just followers and following, or split the extracted JSON.');
+ const h=new DataView((await bytes(file,entry.local,30)).buffer);if(h.getUint32(0,true)!==0x04034b50)throw new Error('Damaged ZIP entry.');
+ const start=entry.local+30+h.getUint16(26,true)+h.getUint16(28,true);if(start+entry.compressed>file.size)throw new Error('Truncated ZIP entry.');
+ let stream=file.slice(start,start+entry.compressed).stream();
+ if(entry.method===8){try{stream=stream.pipeThrough(new DecompressionStream('deflate-raw'));}catch{throw new Error('This browser cannot unzip these files. Open this page in an updated browser, or select extracted JSON/HTML files.');}}
+ const reader=stream.getReader(),decoder=new TextDecoder('utf-8',{fatal:true});let length=0,crc=0xffffffff;const chunks=[];
+ try{while(true){checkCancel();const {done,value}=await reader.read();if(done)break;length+=value.length;if(length>MAX_TEXT||length>entry.uncompressed)throw new Error('ZIP entry exceeded its declared size.');for(const b of value)crc=crcTable[(crc^b)&255]^(crc>>>8);chunks.push(decoder.decode(value,{stream:true}));}chunks.push(decoder.decode());}catch(e){await reader.cancel().catch(()=>{});throw e;}finally{reader.releaseLock();}
+ if(length!==entry.uncompressed||((crc^0xffffffff)>>>0)!==entry.crc)throw new Error('ZIP checksum failed. Download this part again.');
+ return chunks.join('');
+}
+function log(message){auditLines.push(message);}
+function showAudit(){ $('audit').hidden=false;$('auditTitle').textContent='Import details · '+fmt(auditLines.length)+' notes';$('logs').replaceChildren(...auditLines.map(message=>{const div=document.createElement('div');div.textContent=message;return div;}));}
+function render(){
+ const query=$('search').value.trim().toLowerCase().replace(/^@/,'');const filtered=accounts.filter(n=>n.includes(query));const pages=Math.max(1,Math.ceil(filtered.length/100));page=Math.min(page,pages-1);
+ $('list').replaceChildren(...filtered.slice(page*100,(page+1)*100).map(name=>{const li=document.createElement('li'),span=document.createElement('span'),link=document.createElement('a');span.textContent='@'+name;link.textContent='View profile ↗';link.href='https://www.instagram.com/'+encodeURIComponent(name)+'/';link.target='_blank';link.rel='noopener noreferrer';link.setAttribute('aria-label','View @'+name+' on Instagram');li.append(span,link);return li;}));
+ $('empty').hidden=filtered.length>0;$('empty').textContent=accounts.length?'No usernames match your search.':'Everyone you follow appears in your followers list in this export.';
+ $('pager').hidden=!filtered.length;$('pageLabel').textContent=fmt(page*100+1)+'–'+fmt(Math.min((page+1)*100,filtered.length))+' of '+fmt(filtered.length);$('prev').disabled=page===0;$('next').disabled=page+1>=pages;
+}
+async function run(selected){
+ if(busy||!selected.length)return;
+ busy=true;cancelled=false;accounts=[];page=0;auditLines=[];$('results').hidden=true;$('error').hidden=true;$('audit').hidden=true;$('work').hidden=false;$('files').disabled=true;$('choose').style.opacity='.5';$('cancel').disabled=false;$('progress').max=selected.length;$('progress').value=0;
+ const sets={followers:new Set(),following:new Set()},counts={followers:0,following:0};let failed=0,processed=0;
+ const consume=(text,info,label)=>{const names=parseNames(text,info.format,info.kind);names.forEach(n=>sets[info.kind].add(n));counts[info.kind]++;log(label+' · '+fmt(names.size)+' '+info.kind);};
+ try{
+  for(const file of selected){checkCancel();$('status').textContent='Reading '+fmt(processed+1)+' of '+fmt(selected.length)+' · '+file.name;await tick();
+   try{
+    if(/\.zip$/i.test(file.name)){const entries=await zipEntries(file);if(!entries.length)log(file.name+' · No follower or following files; skipped.');for(const entry of entries){checkCancel();$('status').textContent='Reading '+fmt(processed+1)+' of '+fmt(selected.length)+' · '+file.name+' · '+entry.name;await tick();try{consume(await extract(file,entry),entry,file.name+' / '+entry.name);}catch(e){checkCancel();failed++;log(file.name+' / '+entry.name+' · ERROR: '+e.message);}}}
+    else {const info=kindOf(file.name);if(!info)throw new Error('Choose ZIPs or files named followers/following, including numbered parts.');if(file.size>MAX_TEXT)throw new Error('Follower file exceeds 128 MB.');consume(await file.text(),info,file.name);}
+   }catch(e){checkCancel();failed++;log(file.name+' · ERROR: '+e.message);}
+   processed++;$('progress').value=processed;
+  }
+  checkCancel();
+  if(failed)throw new Error(fmt(failed)+' file(s) could not be read. Check Import details below. Fix those files and select the full set again; partial results are hidden to avoid a misleading list.');
+  if(!counts.followers||!counts.following)throw new Error('Could not find '+(!counts.followers&&!counts.following?'follower or following files':!counts.followers?'follower files':'following files')+'. Select all ZIPs from the same export. If necessary, request an All time export of Followers and following in JSON format.');
+  accounts=[...sets.following].filter(n=>!sets.followers.has(n)).sort();$('followersCount').textContent=fmt(sets.followers.size);$('followingCount').textContent=fmt(sets.following.size);$('missingCount').textContent=fmt(accounts.length);$('search').value='';render();$('results').hidden=false;$('status').textContent='Done · '+fmt(processed)+' files checked · '+fmt(counts.followers+counts.following)+' lists combined.';
+ }catch(e){$('error').textContent=e.message;$('error').hidden=false;$('status').textContent=cancelled?'Import cancelled.':'Import needs attention.';}
+ finally{busy=false;$('files').disabled=false;$('files').value='';$('choose').style.opacity='1';$('cancel').disabled=true;showAudit();}
+}
+$('files').addEventListener('change',e=>run(Array.from(e.target.files)));
+$('cancel').onclick=()=>{cancelled=true;$('cancel').disabled=true;$('status').textContent='Cancelling…';};
+for(const type of ['dragenter','dragover'])$('drop').addEventListener(type,e=>{e.preventDefault();if(!busy)$('drop').classList.add('over');});
+$('drop').addEventListener('dragleave',()=>$('drop').classList.remove('over'));
+$('drop').addEventListener('drop',e=>{e.preventDefault();$('drop').classList.remove('over');run(Array.from(e.dataTransfer.files));});
+window.addEventListener('dragover',e=>e.preventDefault());window.addEventListener('drop',e=>e.preventDefault());
+$('search').oninput=()=>{page=0;render();};$('prev').onclick=()=>{page--;render();};$('next').onclick=()=>{page++;render();};
+$('reset').onclick=()=>{accounts=[];auditLines=[];$('logs').replaceChildren();$('list').replaceChildren();$('results').hidden=true;$('work').hidden=true;$('audit').hidden=true;$('error').hidden=true;$('files').focus();};
+if(document.modelContext?.registerTool){try{Promise.resolve(document.modelContext.registerTool({name:'search_non_mutual_following',description:'Search the completed local Instagram comparison and update the visible username filter. Files must first be selected by the user.',inputSchema:{type:'object',properties:{query:{type:'string',maxLength:100}},required:['query'],additionalProperties:false},annotations:{readOnlyHint:false,untrustedContentHint:true},execute(input){if(!input||typeof input.query!=='string'||input.query.length>100||Object.keys(input).some(k=>k!=='query'))throw new Error('Provide only a query string of at most 100 characters.');if(busy||$('results').hidden)throw new Error('Import a complete export first.');$('search').value=input.query;page=0;render();return {visibleRange:$('pageLabel').textContent};}})).catch(()=>{});}catch{}}
+</script></body></html>
